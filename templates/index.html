@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Egypt's Parallel Markets Exchange Rate</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Hack:wght@300;400;700&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.1/moment.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-moment"></script>
+    <style>
+        body {
+            font-family: 'Hack', monospace;
+            text-align: center;
+            margin: 0;
+            padding: 0;
+            background: #f7f8fa;
+        }
+        h1 {
+            margin-top: 40px;
+            font-size: 2.5em;
+            color: #333;
+        }
+        #current-rate {
+            font-size: 24px;
+            margin: 20px 0;
+        }
+        .chart-container {
+            width: 80%;
+            max-width: 800px;
+            margin: 40px auto;
+            position: relative;
+            height: 400px;
+        }
+        .toggle-buttons {
+            margin-top: 20px;
+        }
+        .toggle-buttons button {
+            margin: 5px;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        .explanation-text {
+            text-align: left;
+            margin: 20px auto;
+            width: 80%;
+            max-width: 800px;
+            font-size: 14px;
+        }
+        .active {
+            background-color: #007bff !important;
+            color: #fff !important;
+        }
+        .positive {
+            color: lightgreen; /* Lighter shade of green */
+        }
+        .negative {
+            color: lightcoral; /* Lighter shade of red */
+        }
+        .neutral {
+            color: gray;
+        }
+        .tooltip {
+            background: rgba(0, 0, 0, 0.7);
+            color: #fff;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 14px;
+            pointer-events: none;
+            position: absolute;
+            z-index: 1000;
+            white-space: nowrap;
+            font-family: 'Hack', monospace; /* Match the font of the rest of the app */
+        }
+    </style>
+</head>
+<body>
+    <h1>Egypt's Parallel Markets Exchange Rate</h1>
+    <div id="current-rate">Loading current rate...</div>
+    <div class="chart-container">
+        <canvas id="rateChart"></canvas>
+    </div>
+    <div class="toggle-buttons">
+        <button id="btn-24h" class="btn btn-outline-primary active" onclick="fetchHistoricalRates('24h')">Past 24 Hours</button>
+        <button id="btn-week" class="btn btn-outline-primary" onclick="fetchHistoricalRates('week')">Past Week</button>
+        <button id="btn-month" class="btn btn-outline-primary" onclick="fetchHistoricalRates('month')">Past Month</button>
+    </div>
+    <div class="explanation-text">
+        Egypt is experiencing a currency crisis. The government publishes an official exchange rate, which is often artificially depressed if not pegged to a specific value, which causes the economy to operate with the understanding that the black market rate is the real rate to consider. This website uses Binance's P2P currency marketplace to determine the real-time parallel market value of the Egyptian pound.
+    </div>
+
+    <script>
+        let chart; // Holds the Chart.js instance
+        let dragStartIndex = null; // Index where the drag started
+        let dragEndIndex = null; // Index where the drag ends
+        const tooltipEl = document.createElement('div'); // Tooltip element
+        tooltipEl.classList.add('tooltip'); // Add tooltip class for styling
+        document.body.appendChild(tooltipEl); // Append tooltip to the body
+
+        // Fetch and display the current exchange rate
+        async function fetchCurrentRate() {
+            try {
+                const response = await fetch('/current_rate'); // Fetch current rate from server
+                const data = await response.json(); // Parse the response as JSON
+                const rateElement = document.getElementById('current-rate');
+                const percentageClass = data.percentage_change > 0 ? 'positive' : data.percentage_change < 0 ? 'negative' : 'neutral';
+                rateElement.innerHTML = `1 USD = ${data.weighted_avg_price.toFixed(2)} EGP <span class="${percentageClass}">(${data.percentage_change.toFixed(2)}%)</span>`;
+            } catch (error) {
+                console.error('Error fetching current rate:', error); // Log any errors
+                document.getElementById('current-rate').innerText = 'Error loading current rate';
+            }
+        }
+
+        // Fetch and display historical exchange rates for a given period
+        async function fetchHistoricalRates(period) {
+            try {
+                const response = await fetch(`/historical_rates/${period}`); // Fetch historical rates from server
+                const data = await response.json(); // Parse the response as JSON
+                const ctx = document.getElementById('rateChart').getContext('2d');
+
+                if (chart) {
+                    chart.destroy(); // Destroy the existing chart if any
+                }
+
+                const now = moment(); // Get current time
+                let startDate;
+                if (period === '24h') {
+                    startDate = now.clone().subtract(24, 'hours'); // Calculate start date for 24 hours
+                } else if (period === 'week') {
+                    startDate = now.clone().subtract(7, 'days'); // Calculate start date for week
+                } else if (period === 'month') {
+                    startDate = now.clone().subtract(1, 'month'); // Calculate start date for month
+                }
+
+                const xLimits = {
+                    min: startDate.toDate(), // Set x-axis minimum limit
+                    max: now.toDate() // Set x-axis maximum limit
+                };
+
+                // Create a new Chart.js instance
+                chart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: data.map(entry => entry.datetime),
+                        datasets: [{
+                            label: 'Exchange Rate (EGP/USD)',
+                            data: data.map(entry => entry.weighted_avg_price),
+                            borderColor: 'rgba(75, 192, 192, 1)',
+                            borderWidth: 2,
+                            fill: false,
+                            pointRadius: 0, // Hide the points initially
+                            pointHoverRadius: 0,
+                            lineTension: 0
+                        }]
+                    },
+                    options: {
+                        scales: {
+                            x: {
+                                type: 'time',
+                                time: {
+                                    unit: period === '24h' ? 'hour' : (period === 'week' ? 'day' : 'week'),
+                                    tooltipFormat: 'll HH:mm'
+                                },
+                                title: {
+                                    display: true,
+                                    text: period === '24h' ? 'Time' : 'Date'
+                                },
+                                min: xLimits.min,
+                                max: xLimits.max,
+                                ticks: {
+                                    maxTicksLimit: 4,
+                                    callback: function(value, index, values) {
+                                        return moment(value).format(period === '24h' ? 'HH:mm' : 'MMM D');
+                                    }
+                                }
+                            },
+                            y: {
+                                title: {
+                                    display: true,
+                                    text: 'Exchange Rate (EGP/USD)'
+                                },
+                                beginAtZero: false,
+                                ticks: {
+                                    callback: function(value) {
+                                        return value.toFixed(2); // Format y-axis labels to 2 decimal places
+                                    },
+                                    maxTicksLimit: 5 // Limit number of y-axis labels
+                                }
+                            }
+                        },
+                        plugins: {
+                            tooltip: {
+                                enabled: false, // Disable default tooltip
+                                external: function(context) {
+                                    const tooltipModel = context.tooltip;
+
+                                    // Only show the tooltip if not dragging or drag indices are not set
+                                    if (tooltipModel.opacity === 0 || (dragStartIndex !== null && dragEndIndex === null)) {
+                                        tooltipEl.style.opacity = 0;
+                                        return;
+                                    }
+
+                                    const index = tooltipModel.dataPoints[0].dataIndex;
+                                    const date = moment(data[index].datetime).format('LL HH:mm');
+                                    const value = data[index].weighted_avg_price.toFixed(2);
+
+                                    let tooltipContent = '';
+
+                                    if (dragStartIndex !== null && dragEndIndex !== null) {
+                                        const startValue = data[dragStartIndex].weighted_avg_price;
+                                        const endValue = data[dragEndIndex].weighted_avg_price;
+                                        const percentageChange = ((endValue - startValue) / startValue * 100).toFixed(2);
+                                        const startDate = moment(data[dragStartIndex].datetime).format('LL HH:mm');
+                                        tooltipContent = `<div style="color: ${endValue >= startValue ? 'lightgreen' : 'lightcoral'}">${endValue >= startValue ? '+' : ''}${(endValue - startValue).toFixed(2)} EGP (${endValue >= startValue ? '+' : ''}${percentageChange}%)</div><div style="color: white">${startDate} - ${date}</div>`;
+                                    } else {
+                                        tooltipContent = `<div>${date}</div><div>Price: ${value} EGP</div>`;
+                                    }
+
+                                    tooltipEl.innerHTML = tooltipContent;
+
+                                    const position = context.chart.canvas.getBoundingClientRect();
+                                    const tooltipWidth = tooltipEl.offsetWidth;
+                                    const tooltipHeight = tooltipEl.offsetHeight;
+
+                                    let left = position.left + window.pageXOffset + tooltipModel.caretX;
+                                    let top = position.top + window.pageYOffset + tooltipModel.caretY - tooltipHeight - 10;
+
+                                    if (left + tooltipWidth > window.innerWidth) {
+                                        left -= tooltipWidth + 10;
+                                    } else {
+                                        left += 10;
+                                    }
+
+                                    if (top < window.pageYOffset) {
+                                        top = position.top + window.pageYOffset + tooltipModel.caretY + 10;
+                                    }
+
+                                    tooltipEl.style.opacity = 1;
+                                    tooltipEl.style.left = `${left}px`;
+                                    tooltipEl.style.top = `${top}px`;
+                                }
+                            },
+                            legend: {
+                                display: false // Hide legend
+                            },
+                            hover: {
+                                mode: 'nearest',
+                                intersect: false,
+                                onHover: function(event, chartElement) {
+                                    if (chartElement.length) {
+                                        event.native.target.style.cursor = 'pointer';
+                                        const dataset = chart.data.datasets[chartElement[0].datasetIndex];
+                                        dataset.borderWidth = 3; // Thicken the line
+                                        dataset.shadowBlur = 10; // Add shadow
+                                        dataset.shadowColor = 'rgba(75, 192, 192, 0.5)'; // Shadow color
+                                        chart.update();
+                                    } else {
+                                        event.native.target.style.cursor = 'default';
+                                        chart.data.datasets.forEach(dataset => {
+                                            dataset.borderWidth = 2; // Reset the line thickness
+                                            dataset.shadowBlur = 0; // Remove shadow
+                                            dataset.shadowColor = 'rgba(0, 0, 0, 0)'; // Reset shadow color
+                                        });
+                                        chart.update();
+                                    }
+                                }
+                            }
+                        },
+                        interaction: {
+                            intersect: false,
+                            mode: 'index'
+                        },
+                        animation: {
+                            onComplete: function() {
+                                setTimeout(() => {
+                                    chart.resize();
+                                }, 0);
+                            }
+                        }
+                    }
+                });
+
+                // Mouse events for percentage change calculation and shading
+                const canvas = document.getElementById('rateChart');
+                const ctx2d = canvas.getContext('2d');
+
+                // Mouse down event to start dragging
+                canvas.addEventListener('mousedown', (event) => {
+                    const points = chart.getElementsAtEventForMode(event, 'index', { intersect: false }, false);
+                    if (points.length) {
+                        dragStartIndex = points[0].index;
+                        dragEndIndex = null;
+                    }
+                });
+
+                // Mouse move event to update dragging
+                canvas.addEventListener('mousemove', (event) => {
+                    if (dragStartIndex !== null) {
+                        const points = chart.getElementsAtEventForMode(event, 'index', { intersect: false }, false);
+                        if (points.length) {
+                            dragEndIndex = points[0].index;
+                            const startValue = chart.data.datasets[0].data[dragStartIndex];
+                            const endValue = chart.data.datasets[0].data[dragEndIndex];
+                            const percentageChange = ((endValue - startValue) / startValue * 100).toFixed(2);
+
+                            // Clear the canvas
+                            chart.update();
+
+                            // Draw the translucent shading
+                            const chartArea = chart.chartArea;
+                            const startX = chart.getDatasetMeta(0).data[dragStartIndex].x;
+                            const endX = chart.getDatasetMeta(0).data[dragEndIndex].x;
+                            ctx2d.save();
+                            ctx2d.fillStyle = 'rgba(75, 192, 192, 0.2)';
+                            ctx2d.fillRect(Math.min(startX, endX), chartArea.top, Math.abs(endX - startX), chartArea.bottom - chartArea.top);
+                            ctx2d.restore();
+                        }
+                    }
+                });
+
+                // Mouse up event to stop dragging
+                canvas.addEventListener('mouseup', () => {
+                    dragStartIndex = null;
+                    dragEndIndex = null;
+                    chart.update(); // Clear the shading
+                });
+
+                // Mouse leave event to stop dragging
+                canvas.addEventListener('mouseleave', () => {
+                    dragStartIndex = null;
+                    dragEndIndex = null;
+                    chart.update(); // Clear the shading
+                });
+
+                // Update button active state
+                document.querySelectorAll('.toggle-buttons button').forEach(btn => btn.classList.remove('active'));
+                document.getElementById(`btn-${period}`).classList.add('active');
+            } catch (error) {
+                console.error('Error fetching historical rates:', error);
+            }
+        }
+
+        // Initial fetch of the current rate and historical rates for the past 24 hours
+        fetchCurrentRate();
+        fetchHistoricalRates('24h');
+    </script>
+</body>
+</html>
